@@ -1,0 +1,48 @@
+setwd("...") # Set up your working directory
+library(mlr) # Load mlr3 package
+library(tidyverse) # Load tidyverse package
+palaeo <- read.csv("Your data for training.csv", header = TRUE) # Load your data
+palaeoTib <- as_tibble(palaeo[,-1])
+palaeoTask <- makeRegrTask(data = palaeoTib, 
+                         target = "your dependent variable or target value") # Define task
+forest <- makeLearner("regr.randomForest") # Define learner
+forestParamSpace <- makeParamSet(
+  makeIntegerParam("ntree", lower = 100, upper = 1000),
+  makeIntegerParam("mtry", lower = 1, upper = 100),
+  makeIntegerParam("nodesize", lower = 1, upper = 100),
+  makeIntegerParam("maxnodes", lower = 5, upper = 100)
+) # Create a hyperparameter space
+randomSearch <- makeTuneControlRandom() # Grid search
+cvForTuning <- makeResampleDesc("CV", iters = 10) # Define a 10-fold cross-validation strategy
+library(parallelMap) # Load parallelMap package
+library(parallel) # Load parallel package
+parallelStartSocket(cpus = detectCores())
+tunedForestPars <- tuneParams(forest, task = palaeoTask,
+                            resampling = cvForTuning,
+                            par.set = forestParamSpace,
+                            control = randomSearch)
+parallelStop() # Run in a multi-threaded environment
+tunedForestPars # Output optimal hyperparameter values
+tunedForest <- setHyperPars(forest, par.vals = tunedForestPars$x)
+tunedForestModel <- train(tunedForest, palaeoTask) # Train the model with the optimal hyperparameters
+saveRDS(tunedForestModel, file = "The best RF model.rds") # Save the trained random forest model
+forestModelData <- getLearnerModel(tunedForestModel)
+plot(forestModelData) # Graphs showing relations between errors and numbers of decision tree
+forestWrapper <- makeTuneWrapper(forest, 
+                                 resampling = cvForTuning, 
+                                 par.set = forestParamSpace,
+                                 control = randomSearch)
+outer <- makeResampleDesc("CV", iters = 5)
+parallelStartSocket(cpus = detectCores())
+cvWithTuning <- resample(forestWrapper, palaeoTask, outer)
+parallelStop()
+cvWithTuning # View the average performance of the model
+
+##################################################################################
+datanew <- read.csv("your data for prediction.csv", header = TRUE)
+datanew <- datanew[,-2]
+datanewTib <- as_tibble(datanew)
+newdataPred <- predict(tunedForestModel, newdata = datanewTib) # Use models to make predictions
+getPredictionResponse(newdataPred)
+newdataPred <- as.data.frame(newdataPred)
+newdataPred
